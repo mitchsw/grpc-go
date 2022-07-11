@@ -492,6 +492,7 @@ func (cs *clientStream) commitAttempt() {
 // shouldRetry returns nil if the RPC should be retried; otherwise it returns
 // the error that should be returned by the operation.
 func (cs *clientStream) shouldRetry(err error) error {
+	fmt.Printf("shouldRetry[1]: err=%v\n", err)
 	unprocessed := false
 	if cs.attempt.s == nil {
 		pioErr, ok := err.(transport.PerformedIOError)
@@ -508,6 +509,7 @@ func (cs *clientStream) shouldRetry(err error) error {
 			return nil
 		}
 	}
+	fmt.Printf("shouldRetry[2]: finished=%v committed=%v\n", cs.finished, cs.committed)
 	if cs.finished || cs.committed {
 		// RPC is finished or committed; cannot retry.
 		return err
@@ -517,10 +519,12 @@ func (cs *clientStream) shouldRetry(err error) error {
 		<-cs.attempt.s.Done()
 		unprocessed = cs.attempt.s.Unprocessed()
 	}
+	fmt.Printf("shouldRetry[3]: firstAttempt=%v unprocessed=%v\n", cs.firstAttempt, unprocessed)
 	if cs.firstAttempt && unprocessed {
 		// First attempt, stream unprocessed: transparently retry.
 		return nil
 	}
+	fmt.Printf("shouldRetry[4]: disableRetry=%v\n", cs.cc.dopts.disableRetry)
 	if cs.cc.dopts.disableRetry {
 		return err
 	}
@@ -528,6 +532,7 @@ func (cs *clientStream) shouldRetry(err error) error {
 	pushback := 0
 	hasPushback := false
 	if cs.attempt.s != nil {
+		fmt.Printf("shouldRetry[5]: cs.attempt.s != nil\n")
 		if !cs.attempt.s.TrailersOnly() {
 			return err
 		}
@@ -556,6 +561,11 @@ func (cs *clientStream) shouldRetry(err error) error {
 	} else {
 		code = status.Convert(err).Code()
 	}
+	if rp != nil {
+		fmt.Printf("shouldRetry[6]: code=%v, retriable=%v\n", code, rp.RetryableStatusCodes[code])
+	} else {
+		fmt.Printf("shouldRetry[7]: code=%v, rp=nil!\n", code)
+	}
 
 	rp := cs.methodConfig.RetryPolicy
 	if rp == nil || !rp.RetryableStatusCodes[code] {
@@ -565,8 +575,10 @@ func (cs *clientStream) shouldRetry(err error) error {
 	// Note: the ordering here is important; we count this as a failure
 	// only if the code matched a retryable code.
 	if cs.retryThrottler.throttle() {
+		fmt.Printf("shouldRetry[8]: throttled!\n")
 		return err
 	}
+	fmt.Printf("shouldRetry[9]: numRetries+1=%v MaxAttempts=%v\n", cs.numRetries+1,rp.MaxAttempts)
 	if cs.numRetries+1 >= rp.MaxAttempts {
 		return err
 	}
@@ -591,8 +603,10 @@ func (cs *clientStream) shouldRetry(err error) error {
 	select {
 	case <-t.C:
 		cs.numRetries++
+		fmt.Printf("shouldRetry[10]: RETRYING!\n")
 		return nil
 	case <-cs.ctx.Done():
+		fmt.Printf("shouldRetry[11]: ctx done\n")
 		t.Stop()
 		return status.FromContextError(cs.ctx.Err()).Err()
 	}
